@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "title": "Item Tracker",
   "description": "Create and track crafting material lists from trader menus.",
-  "authors": ["item-tracker"],
+  "repository": "https://github.com/JoaoGabrielRLP/Crosscode-item-tracker",
+  "tags": ["QoL", "library"],
+  "authors": ["JoaoGabrielRLP"],
   "dependencies": {
     "ccloader": "^2.22.0",
     "crosscode": "^1.0.0"
