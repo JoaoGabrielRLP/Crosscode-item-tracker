@@ -299,9 +299,8 @@ function createTrackerDetails(list, onDelete, onTrack) {
 	details.title.setAlign(ig.GUI_ALIGN.X_CENTER, ig.GUI_ALIGN.Y_TOP);
 	details.title.setPos(0, 4);
 	details.addChildGui(details.title);
-	details.items = new sc.TextGui("", {font: sc.fontsystem.tinyFont, linePadding: 0, maxWidth: 254});
-	details.items.setPos(13, 28);
-	details.addChildGui(details.items);
+	details.itemRows = [];
+	details.rowHighlights = [];
 	details.infoButtons = [];
 	details.infoLabels = [];
 	details.deleteButton = new sc.ButtonGui("DELETE", null, true, sc.BUTTON_TYPE.SMALL);
@@ -329,15 +328,40 @@ function createTrackerDetails(list, onDelete, onTrack) {
 	details.setList = function(nextList) {
 		details.clearInfoButtons();
 		details.title.setText(nextList.name);
-		details.items.setText(nextList.items.map((trackedItem, index) => {
+		let rowY = 28;
+		nextList.items.forEach((trackedItem) => {
 			const item = sc.inventory.getItem(trackedItem.id);
 			const current = sc.model.player.getItemAmountWithEquip(trackedItem.id) || 0;
 			const sourceText = current > 0 ? getItemSourceText(item) : "";
+			const rowText = itemIcon(item) + itemLabel(item) + " " + Math.min(current, trackedItem.amount) + "/" + trackedItem.amount;
+			const rowGui = new sc.TextGui(rowText, {font: sc.fontsystem.tinyFont, linePadding: 0, maxWidth: 240});
+			rowGui.setPos(13, rowY);
+			details.addChildGui(rowGui);
+			details.itemRows.push(rowGui);
+			const rowHeight = Math.max(rowGui.hook.size.y, 14);
 			if (sourceText) {
+				const rowHighlight = new ig.ColorGui("rgba(255,140,0,0.35)", 254, rowHeight);
+				rowHighlight.setPos(13, rowY);
+				rowHighlight.hook.transitions = {
+					IDLE: {state: {alpha: 0}, time: 0.1, timeFunction: KEY_SPLINES.LINEAR},
+					HOVER: {state: {alpha: 1}, time: 0.1, timeFunction: KEY_SPLINES.LINEAR}
+				};
+				rowHighlight.doStateTransition("IDLE", true);
+				details.addChildGui(rowHighlight);
+				details.rowHighlights.push(rowHighlight);
+
 				const infoButton = new ig.FocusGui;
-				infoButton.setSize(254, 14);
+				infoButton.setSize(254, rowHeight);
 				infoButton.keepMouseFocus = true;
-				infoButton.setPos(13, 28 + index * 14);
+				infoButton.setPos(13, rowY);
+				infoButton.focusGained = function() {
+					ig.FocusGui.prototype.focusGained.call(this);
+					rowHighlight.doStateTransition("HOVER");
+				};
+				infoButton.focusLost = function() {
+					ig.FocusGui.prototype.focusLost.call(this);
+					rowHighlight.doStateTransition("IDLE");
+				};
 				infoButton.onButtonPress = function() {
 					const message = new sc.CenterMsgBoxGui(sourceText, {
 						maxWidth: 240,
@@ -369,7 +393,7 @@ function createTrackerDetails(list, onDelete, onTrack) {
 				};
 				details.addChildGui(infoButton);
 				const infoLabel = new sc.TextGui("i", {font: sc.fontsystem.tinyFont});
-				infoLabel.setPos(256, 28 + index * 14);
+				infoLabel.setPos(256, rowY);
 				details.addChildGui(infoLabel);
 				sc.menu.buttonInteract.addGlobalButton(infoButton, function() {
 					return sc.control.menuConfirm();
@@ -377,8 +401,8 @@ function createTrackerDetails(list, onDelete, onTrack) {
 				details.infoButtons.push(infoButton);
 				details.infoLabels.push(infoLabel);
 			}
-			return itemIcon(item) + itemLabel(item) + " " + Math.min(current, trackedItem.amount) + "/" + trackedItem.amount;
-		}).join("\n"));
+			rowY += rowHeight;
+		});
 	};
 	details.clearInfoButtons = function() {
 		for (const button of details.infoButtons) {
@@ -388,6 +412,10 @@ function createTrackerDetails(list, onDelete, onTrack) {
 		details.infoButtons = [];
 		for (const label of details.infoLabels) details.removeChildGui(label);
 		details.infoLabels = [];
+		for (const row of details.itemRows) details.removeChildGui(row);
+		details.itemRows = [];
+		for (const highlight of details.rowHighlights) details.removeChildGui(highlight);
+		details.rowHighlights = [];
 	};
 	details.setList(list);
 	details.doStateTransition("DEFAULT", true);
@@ -502,7 +530,7 @@ export default class ItemTracker extends Plugin {
 				sc.QuestListBox.inject({
 					init: function() {
 						this.parent();
-						const tab = new sc.ItemTabbedBox.TabButton("Listas", "quest", 90);
+						const tab = new sc.ItemTabbedBox.TabButton("Lists", "quest", 90);
 						tab.textChild.setPos(6, 0);
 						tab.setPos(0, 2);
 						tab.setData({type: "item-tracker-lists"});
