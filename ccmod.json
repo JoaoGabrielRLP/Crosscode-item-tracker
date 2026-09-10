@@ -1,0 +1,12 @@
+{
+  "id": "item-tracker",
+  "version": "0.1.0",
+  "title": "Item Tracker",
+  "description": "Create and track crafting material lists from trader menus.",
+  "authors": ["item-tracker"],
+  "dependencies": {
+    "ccloader": "^2.22.0",
+    "crosscode": "^1.0.0"
+  },
+  "plugin": "plugin.js"
+}
