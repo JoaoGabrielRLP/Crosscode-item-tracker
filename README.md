@@ -52,7 +52,8 @@ O HUD aparece no canto superior direito e mostra:
 - O nome do item que está sendo acompanhado.
 - Cada material necessário.
 - A quantidade atual e a quantidade necessária.
-- Um indicador visual quando o material já foi obtido.
+- Um indicador visual e texto amarelo quando o material já foi obtido.
+- Uma mensagem temporária quando todos os materiais da lista forem obtidos.
 
 O HUD mostra somente a lista ativa. A tecla `L` controla a troca entre listas e
 a visibilidade do HUD.

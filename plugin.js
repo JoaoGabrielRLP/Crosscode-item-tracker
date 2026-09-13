@@ -114,6 +114,13 @@ function getActiveList(state) {
 	return state.lists.find((list) => list.id === state.activeListId) || null;
 }
 
+function haveSameRequirements(firstRequirements, secondRequirements) {
+	if (!Array.isArray(firstRequirements) || firstRequirements.length !== secondRequirements.length) return false;
+	const firstById = {};
+	for (const requirement of firstRequirements) firstById[requirement.id] = requirement.amount;
+	return secondRequirements.every((requirement) => firstById[requirement.id] === requirement.amount);
+}
+
 function isListComplete(list) {
 	return list.items.every((trackedItem) => {
 		return (sc.model.player.getItemAmountWithEquip(trackedItem.id) || 0) >= trackedItem.amount;
@@ -127,6 +134,7 @@ function updateListStatus(state) {
 			list.completed = true;
 			list.completedAt = Date.now();
 			state.trackedListIds = state.trackedListIds.filter((id) => id !== list.id);
+			showCompletionNotification(list);
 			changed = true;
 		}
 	}
@@ -160,7 +168,11 @@ function createList(offer) {
 
 	const output = offer.get && offer.get[0] && sc.inventory.getItem(offer.get[0].id);
 	const outputId = offer.get && offer.get[0] && offer.get[0].id;
-	const existingList = state.lists.find((list) => list.outputId === outputId || (!list.outputId && list.name === itemLabel(output)));
+	const outputName = itemLabel(output);
+	const existingList = state.lists.find((list) => {
+		const sameOutput = list.outputId === outputId || (!list.outputId && list.name === outputName);
+		return sameOutput && haveSameRequirements(list.items, requirements);
+	});
 	if (existingList) {
 		existingList.items = requirements;
 		existingList.completed = false;
@@ -174,7 +186,7 @@ function createList(offer) {
 	const list = {
 		id: "list-" + Date.now(),
 		outputId: outputId,
-		name: itemLabel(output),
+		name: outputName,
 		items: requirements
 	};
 	state.lists.push(list);
@@ -210,7 +222,8 @@ function getHudText() {
 		const item = sc.inventory.getItem(trackedItem.id);
 		const current = sc.model.player.getItemAmountWithEquip(trackedItem.id) || 0;
 		const complete = current >= trackedItem.amount;
-		lines.push((complete ? "\\i[check]" : itemIcon(item)) + itemLabel(item) + " " + Math.min(current, trackedItem.amount) + "/" + trackedItem.amount);
+		const line = (complete ? "\\i[check]" : itemIcon(item)) + itemLabel(item) + " " + Math.min(current, trackedItem.amount) + "/" + trackedItem.amount;
+		lines.push(complete ? "\\c[3]" + line + "\\c[0]" : line);
 	}
 	return lines.join("\n");
 }
@@ -247,6 +260,30 @@ function cycleHudList() {
 
 let ItemTrackerHud;
 
+function showCompletionNotification(list) {
+	if (!window.itemTrackerCompletionNotification) {
+		window.itemTrackerCompletionNotification = new ig.GuiElementBase;
+		window.itemTrackerCompletionNotification.setSize(220, 32);
+		window.itemTrackerCompletionNotification.setAlign(ig.GUI_ALIGN.X_RIGHT, ig.GUI_ALIGN.Y_TOP);
+		window.itemTrackerCompletionNotification.setPos(-8, 164);
+		window.itemTrackerCompletionNotification.background = new ig.ColorGui("#111820E6", 220, 32);
+		window.itemTrackerCompletionNotification.addChildGui(window.itemTrackerCompletionNotification.background);
+		window.itemTrackerCompletionNotification.text = new sc.TextGui("", {font: sc.fontsystem.tinyFont});
+		window.itemTrackerCompletionNotification.text.setAlign(ig.GUI_ALIGN.X_CENTER, ig.GUI_ALIGN.Y_CENTER);
+		window.itemTrackerCompletionNotification.addChildGui(window.itemTrackerCompletionNotification.text);
+		window.itemTrackerCompletionNotification.update = function() {
+			this.parent();
+			if (!this.hook.visible) return;
+			this._time -= ig.system.tick;
+			if (this._time <= 0) this.hook.visible = false;
+		};
+		ig.gui.addGuiElement(window.itemTrackerCompletionNotification);
+	}
+	window.itemTrackerCompletionNotification.text.setText("\\c[3]Todos os itens de " + list.name + " conseguidos!\\c[0]");
+	window.itemTrackerCompletionNotification._time = 3;
+	window.itemTrackerCompletionNotification.hook.visible = true;
+}
+
 function ensureItemTrackerHud() {
 	if (!ItemTrackerHud || window.itemTrackerHud) return window.itemTrackerHud;
 	window.itemTrackerHud = new ItemTrackerHud();
@@ -264,13 +301,14 @@ function createItemTrackerHudClass() {
 		background: null,
 		init: function() {
 			this.parent();
-			this.setSize(190, 130);
+			this.setSize(145, 130);
 			this.setAlign(ig.GUI_ALIGN.X_RIGHT, ig.GUI_ALIGN.Y_TOP);
-			this.setPos(-8, 28);
-			this.background = new ig.ColorGui("#111820D9", 190, 130);
+			this.setPos(-4, 18);
+			this.background = new ig.ColorGui("#11182099", 145, 130);
 			this.addChildGui(this.background);
-			this.text = new sc.TextGui("", {font: sc.fontsystem.tinyFont});
-			this.text.setPos(8, 6);
+			this.text = new sc.TextGui("", {font: sc.fontsystem.tinyFont, maxWidth: 133});
+			this.text.setAlign(ig.GUI_ALIGN.X_LEFT, ig.GUI_ALIGN.Y_TOP);
+			this.text.setPos(6, 6);
 			this.addChildGui(this.text);
 			this._refresh();
 		},
@@ -281,7 +319,7 @@ function createItemTrackerHudClass() {
 		_refresh: function() {
 			const text = getHudText();
 			this.text.setText(text);
-			this.background.hook.size.y = text ? Math.min(130, Math.max(24, 10 * (text.split("\n").length + 1))) : 0;
+			this.background.hook.size.y = text ? Math.min(130, Math.max(24, this.text.hook.size.y + 12)) : 0;
 			this.hook.size.y = this.background.hook.size.y;
 			this.hook.visible = Boolean(text);
 		}
@@ -333,7 +371,8 @@ function createTrackerDetails(list, onDelete, onTrack) {
 			const item = sc.inventory.getItem(trackedItem.id);
 			const current = sc.model.player.getItemAmountWithEquip(trackedItem.id) || 0;
 			const sourceText = current > 0 ? getItemSourceText(item) : "";
-			const rowText = itemIcon(item) + itemLabel(item) + " " + Math.min(current, trackedItem.amount) + "/" + trackedItem.amount;
+			const row = itemIcon(item) + itemLabel(item) + " " + Math.min(current, trackedItem.amount) + "/" + trackedItem.amount;
+			const rowText = current >= trackedItem.amount ? "\\c[3]" + row + "\\c[0]" : row;
 			const rowGui = new sc.TextGui(rowText, {font: sc.fontsystem.tinyFont, linePadding: 0, maxWidth: 240});
 			rowGui.setPos(13, rowY);
 			details.addChildGui(rowGui);
