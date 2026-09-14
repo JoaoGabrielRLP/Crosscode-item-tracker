@@ -2,6 +2,15 @@
 
 const STORAGE_KEY = "crosscode-item-tracker.lists";
 
+function getListKey(list) {
+	const items = Array.isArray(list.items) ? list.items : [];
+	const signature = items
+		.map((item) => item.id + ":" + item.amount)
+		.sort()
+		.join(",");
+	return (list.outputId || list.name) + "|" + signature;
+}
+
 function readState() {
 	try {
 		const state = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
@@ -9,7 +18,7 @@ function readState() {
 		const uniqueLists = [];
 		const seenListKeys = {};
 		for (const list of savedLists) {
-			const key = list.outputId || list.name;
+			const key = getListKey(list);
 			if (seenListKeys[key]) continue;
 			seenListKeys[key] = true;
 			uniqueLists.push({...list, completed: list.completed === true, completedAt: list.completedAt || null});
@@ -97,7 +106,7 @@ function getSourceLocation(source) {
 function getSourceImage(source) {
 	if (!source) return null;
 	if (source.type === "ENEMY") return {enemy: source.value};
-	if (source.type === "PLANT") return {image: new ig.Image("media/entity/pets/pet-plant.png"), width: 32, height: 32};
+	if (source.type === "PLANT") return {plant: source.value};
 	return null;
 }
 
@@ -161,6 +170,14 @@ function deleteList(listId) {
 	writeState(state);
 }
 
+function areRequirementsEqual(a, b) {
+	if (a.length !== b.length) return false;
+	const sortById = (list) => [...list].sort((x, y) => (x.id > y.id ? 1 : x.id < y.id ? -1 : 0));
+	const sortedA = sortById(a);
+	const sortedB = sortById(b);
+	return sortedA.every((item, index) => item.id === sortedB[index].id && item.amount === sortedB[index].amount);
+}
+
 function createList(offer) {
 	const state = readState();
 	const requirements = getOfferItems(offer);
@@ -168,13 +185,11 @@ function createList(offer) {
 
 	const output = offer.get && offer.get[0] && sc.inventory.getItem(offer.get[0].id);
 	const outputId = offer.get && offer.get[0] && offer.get[0].id;
-	const outputName = itemLabel(output);
 	const existingList = state.lists.find((list) => {
-		const sameOutput = list.outputId === outputId || (!list.outputId && list.name === outputName);
-		return sameOutput && haveSameRequirements(list.items, requirements);
+		const sameOutput = list.outputId === outputId || (!list.outputId && list.name === itemLabel(output));
+		return sameOutput && areRequirementsEqual(list.items, requirements);
 	});
 	if (existingList) {
-		existingList.items = requirements;
 		existingList.completed = false;
 		existingList.completedAt = null;
 		state.activeListId = existingList.id;
@@ -186,7 +201,7 @@ function createList(offer) {
 	const list = {
 		id: "list-" + Date.now(),
 		outputId: outputId,
-		name: outputName,
+		name: itemLabel(output),
 		items: requirements
 	};
 	state.lists.push(list);
@@ -419,7 +434,14 @@ function createTrackerDetails(list, onDelete, onTrack) {
 							enemyDisplay.setPos(0, textHeight + 4);
 							message.textGui.addChildGui(enemyDisplay);
 							message.textGui.setSize(message.textGui.hook.size.x, textHeight + 119);
-						} else {
+						} else if (sourceImage.plant) {
+							const plantDisplay = new sc.BotanicsPlantView;
+							plantDisplay.setPlant(sourceImage.plant);
+							plantDisplay.setAlign(ig.GUI_ALIGN.X_CENTER, ig.GUI_ALIGN.Y_TOP);
+							plantDisplay.setPos(0, textHeight + 4);
+							message.textGui.addChildGui(plantDisplay);
+							message.textGui.setSize(message.textGui.hook.size.x, textHeight + plantDisplay.hook.size.y + 8);
+						} else if (sourceImage.image) {
 							const imageGui = new ig.ImageGui(sourceImage.image, 0, 0, sourceImage.width, sourceImage.height);
 							imageGui.setAlign(ig.GUI_ALIGN.X_CENTER, ig.GUI_ALIGN.Y_TOP);
 							imageGui.setPos(0, textHeight + 4);
@@ -469,8 +491,39 @@ export default class ItemTracker extends Plugin {
 
 	postload() {
 		ig.module("item-tracker-trade-menu")
-					.requires("game.feature.trade.gui.trade-menu", "game.feature.menu.gui.quests.quest-menu", "game.feature.menu.gui.enemies.enemy-pages")
+			.requires(
+				"game.feature.trade.gui.trade-menu",
+				"game.feature.menu.gui.quests.quest-menu",
+				"game.feature.menu.gui.enemies.enemy-pages",
+				"game.feature.menu.gui.botanics.botanics-misc"
+			)
 			.defines(() => {
+				sc.BotanicsPlantView.inject({
+					setPlant: function(plantKey, skipTransitions) {
+						if (plantKey) {
+							if (this.display) {
+								this.display.remove(true);
+								this.display = null;
+							}
+							const drop = ig.database.get("drops")[plantKey];
+							const resolvedKey = (drop && drop.link) || plantKey;
+							let anim = (sc.menu.dropCounts && sc.menu.dropCounts[resolvedKey] && sc.menu.dropCounts[resolvedKey].anim)
+								|| (ig.globalSettings && ig.globalSettings.getGlobalSettingOptions("ENTITY", "ItemDestruct") && ig.globalSettings.getGlobalSettingOptions("ENTITY", "ItemDestruct")[resolvedKey] && ig.globalSettings.getGlobalSettingOptions("ENTITY", "ItemDestruct")[resolvedKey].desType)
+								|| (sc.menu.dropCounts && sc.menu.dropCounts[plantKey] && sc.menu.dropCounts[plantKey].anim)
+								|| (ig.globalSettings && ig.globalSettings.getGlobalSettingOptions("ENTITY", "ItemDestruct") && ig.globalSettings.getGlobalSettingOptions("ENTITY", "ItemDestruct")[plantKey] && ig.globalSettings.getGlobalSettingOptions("ENTITY", "ItemDestruct")[plantKey].desType)
+								|| plantKey;
+							if (!sc.ITEM_DESTRUCT_TYPE || !sc.ITEM_DESTRUCT_TYPE[anim]) {
+								anim = "Autumn-Ground-1";
+							}
+							this.display = new sc.ItemDestructDisplayGui(resolvedKey, anim, true, this.centerEntity.bind(this));
+							this.container.addChildGui(this.display);
+							this.doStateTransition("DEFAULT", true);
+						} else {
+							this.parent(plantKey, skipTransitions);
+						}
+					}
+				});
+
 				sc.QuestInfoBox.inject({
 					init: function() {
 						this.parent();
