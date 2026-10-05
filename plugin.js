@@ -3,7 +3,7 @@
 const STORAGE_KEY = "crosscode-item-tracker.lists";
 
 function getListKey(list) {
-	const items = Array.isArray(list.items) ? list.items : [];
+	const items = Array.isArray(list.baseItems) ? list.baseItems : (Array.isArray(list.items) ? list.items : []);
 	const signature = items
 		.map((item) => item.id + ":" + item.amount)
 		.sort()
@@ -21,7 +21,12 @@ function readState() {
 			const key = getListKey(list);
 			if (seenListKeys[key]) continue;
 			seenListKeys[key] = true;
-			uniqueLists.push({...list, completed: list.completed === true, completedAt: list.completedAt || null});
+			uniqueLists.push({
+				...list,
+				baseItems: Array.isArray(list.baseItems) ? list.baseItems : list.items,
+				completed: list.completed === true,
+				completedAt: list.completedAt || null
+			});
 		}
 		const activeListId = uniqueLists.some((list) => list.id === state.activeListId) ? state.activeListId : (uniqueLists[0] && uniqueLists[0].id) || null;
 		const trackedListIds = (Array.isArray(state.trackedListIds) ? state.trackedListIds : []).filter((id) => uniqueLists.some((list) => list.id === id));
@@ -54,13 +59,26 @@ function itemIcon(item) {
 	return item && item.icon ? "\\i[" + item.icon + "]" : "";
 }
 
+function localizedText(label) {
+	if (typeof label === "string") return label;
+	if (!label) return "";
+	if (typeof label.value === "string" && label.value !== "MISSING LABEL") return label.value;
+	if (label.data) return ig.LangLabel.getText(label.data);
+	return ig.LangLabel.getText(label);
+}
+
+function getReadableMapName(mapPath) {
+	const name = (mapPath || "").split(".").pop().split("/").pop();
+	return name.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function getItemSourceText(item) {
 	const sources = (item && item.sources) || [];
 	const groups = {};
 	const locations = [];
 	for (const source of sources) {
 		if (!source || !source.value || source.type === "OTHER") continue;
-		const label = source.type === "PLANT" ? "Botânica" : source.type === "ENEMY" ? "Criatura" : source.type;
+		const label = source.type === "PLANT" ? "Botany" : source.type === "ENEMY" ? "Creature" : source.type;
 		const sourceName = getSourceName(source);
 		if (!groups[label]) groups[label] = [];
 		if (groups[label].indexOf(sourceName) < 0) groups[label].push(sourceName);
@@ -68,7 +86,7 @@ function getItemSourceText(item) {
 		if (location && locations.indexOf(location) < 0) locations.push(location);
 	}
 	const lines = Object.keys(groups).map((label) => label + ": " + groups[label].join(", "));
-	if (locations.length) lines.push("Encontrado em: " + locations.join(", "));
+	if (locations.length) lines.push("Found in: " + locations.join(", "));
 	return lines.join("\n");
 }
 
@@ -123,6 +141,44 @@ function getActiveList(state) {
 	return state.lists.find((list) => list.id === state.activeListId) || null;
 }
 
+const COMPLETION_DISPLAY_TIME = 3;
+let completionHudQueue = [];
+let completionHudListId = null;
+let completionHudTime = 0;
+let completionSound;
+let currentTraderLocation = null;
+
+function playCompletionSound() {
+	if (!completionSound) completionSound = new ig.Sound("media/sound/hud/quest-solved.ogg", 0.6);
+	completionSound.play();
+}
+
+function showNextCompletedHudList() {
+	completionHudListId = completionHudQueue.shift() || null;
+	completionHudTime = completionHudListId ? COMPLETION_DISPLAY_TIME : 0;
+}
+
+function queueCompletedHudList(list) {
+	if (completionHudListId === list.id || completionHudQueue.indexOf(list.id) >= 0) return;
+	completionHudQueue.push(list.id);
+	if (!completionHudListId) showNextCompletedHudList();
+}
+
+function resetListForTracking(list) {
+	const recipeItems = list.baseItems || list.items;
+	list.items = recipeItems.map((item) => ({
+		id: item.id,
+		amount: (sc.model.player.getItemAmountWithEquip(item.id) || 0) + item.amount
+	}));
+	list.completed = false;
+	list.completedAt = null;
+	completionHudQueue = completionHudQueue.filter((id) => id !== list.id);
+	if (completionHudListId === list.id) {
+		completionHudListId = null;
+		completionHudTime = 0;
+	}
+}
+
 function haveSameRequirements(firstRequirements, secondRequirements) {
 	if (!Array.isArray(firstRequirements) || firstRequirements.length !== secondRequirements.length) return false;
 	const firstById = {};
@@ -143,7 +199,8 @@ function updateListStatus(state) {
 			list.completed = true;
 			list.completedAt = Date.now();
 			state.trackedListIds = state.trackedListIds.filter((id) => id !== list.id);
-			showCompletionNotification(list);
+			queueCompletedHudList(list);
+			playCompletionSound();
 			changed = true;
 		}
 	}
@@ -187,11 +244,12 @@ function createList(offer) {
 	const outputId = offer.get && offer.get[0] && offer.get[0].id;
 	const existingList = state.lists.find((list) => {
 		const sameOutput = list.outputId === outputId || (!list.outputId && list.name === itemLabel(output));
-		return sameOutput && areRequirementsEqual(list.items, requirements);
+		return sameOutput && areRequirementsEqual(list.baseItems || list.items, requirements);
 	});
 	if (existingList) {
-		existingList.completed = false;
-		existingList.completedAt = null;
+		if (existingList.completed) resetListForTracking(existingList);
+		existingList.baseItems = requirements.map((item) => ({...item}));
+		if (currentTraderLocation) existingList.traderLocation = {...currentTraderLocation};
 		state.activeListId = existingList.id;
 		if (state.trackedListIds.indexOf(existingList.id) < 0) state.trackedListIds.push(existingList.id);
 		state.visible = true;
@@ -202,7 +260,9 @@ function createList(offer) {
 		id: "list-" + Date.now(),
 		outputId: outputId,
 		name: itemLabel(output),
-		items: requirements
+		items: requirements.map((item) => ({...item})),
+		baseItems: requirements.map((item) => ({...item})),
+		traderLocation: currentTraderLocation ? {...currentTraderLocation} : null
 	};
 	state.lists.push(list);
 	state.activeListId = list.id;
@@ -228,8 +288,8 @@ function toggleVisible() {
 function getHudText() {
 	const state = readState();
 	updateListStatus(state);
-	const list = getActiveList(state);
-	if (!state.visible || !list) return "";
+	const list = state.lists.find((entry) => entry.id === completionHudListId) || getActiveList(state);
+	if ((!state.visible && !completionHudListId) || !list) return "";
 
 	const lines = [];
 	lines.push("TRACK: " + list.name);
@@ -240,6 +300,7 @@ function getHudText() {
 		const line = (complete ? "\\i[check]" : itemIcon(item)) + itemLabel(item) + " " + Math.min(current, trackedItem.amount) + "/" + trackedItem.amount;
 		lines.push(complete ? "\\c[3]" + line + "\\c[0]" : line);
 	}
+	if (list.completed) lines.push("\\c[3]completed\\c[0]");
 	return lines.join("\n");
 }
 
@@ -250,6 +311,45 @@ function setActiveList(listId) {
 	if (state.trackedListIds.indexOf(listId) < 0) state.trackedListIds.push(listId);
 	writeState(state);
 	if (window.itemTrackerHud) window.itemTrackerHud._refresh();
+}
+
+function trackList(listId) {
+	const state = readState();
+	const list = state.lists.find((entry) => entry.id === listId);
+	if (!list) return;
+	if (list.completed) resetListForTracking(list);
+	state.activeListId = listId;
+	if (state.trackedListIds.indexOf(listId) < 0) state.trackedListIds.push(listId);
+	state.visible = true;
+	writeState(state);
+	ensureItemTrackerHud();
+	window.itemTrackerHud._refresh();
+	const details = window.itemTrackerQuestMenu && window.itemTrackerQuestMenu.questInfoBox.itemTrackerDetails;
+	if (details) details.setList(list);
+}
+
+function showTraderLocation(list) {
+	const location = list.traderLocation;
+	const map = location && location.map && location.map !== "MISSING LABEL"
+		? localizedText(location.map)
+		: location && location.mapPath ? getReadableMapName(location.mapPath) : "Visit trader and press Track to refresh";
+	const locationText = location
+		? "Trader: " + (localizedText(location.name) || "Unknown") + "\nRegion: " + (localizedText(location.area) || "Unknown") + "\nMap: " + (map || "Unknown")
+		: "Trader location was not saved for this list.";
+	const message = new sc.CenterMsgBoxGui(locationText, {
+		maxWidth: 240,
+		speed: ig.TextBlock.SPEED.IMMEDIATE
+	}, "black", 0.9);
+	message.hook.zIndex = 15000;
+	message.hook.pauseGui = true;
+	if (location && location.characterName) {
+		const display = new sc.NPCDisplayGui(location.characterName, true);
+		display.setAlign(ig.GUI_ALIGN.X_CENTER, ig.GUI_ALIGN.Y_TOP);
+		display.setPos(0, message.textGui.hook.size.y + 4);
+		message.textGui.addChildGui(display);
+		message.textGui.setSize(message.textGui.hook.size.x, message.textGui.hook.size.y + 80);
+	}
+	ig.gui.addGuiElement(message);
 }
 
 function cycleHudList() {
@@ -274,30 +374,6 @@ function cycleHudList() {
 }
 
 let ItemTrackerHud;
-
-function showCompletionNotification(list) {
-	if (!window.itemTrackerCompletionNotification) {
-		window.itemTrackerCompletionNotification = new ig.GuiElementBase;
-		window.itemTrackerCompletionNotification.setSize(220, 32);
-		window.itemTrackerCompletionNotification.setAlign(ig.GUI_ALIGN.X_RIGHT, ig.GUI_ALIGN.Y_TOP);
-		window.itemTrackerCompletionNotification.setPos(-8, 164);
-		window.itemTrackerCompletionNotification.background = new ig.ColorGui("#111820E6", 220, 32);
-		window.itemTrackerCompletionNotification.addChildGui(window.itemTrackerCompletionNotification.background);
-		window.itemTrackerCompletionNotification.text = new sc.TextGui("", {font: sc.fontsystem.tinyFont});
-		window.itemTrackerCompletionNotification.text.setAlign(ig.GUI_ALIGN.X_CENTER, ig.GUI_ALIGN.Y_CENTER);
-		window.itemTrackerCompletionNotification.addChildGui(window.itemTrackerCompletionNotification.text);
-		window.itemTrackerCompletionNotification.update = function() {
-			this.parent();
-			if (!this.hook.visible) return;
-			this._time -= ig.system.tick;
-			if (this._time <= 0) this.hook.visible = false;
-		};
-		ig.gui.addGuiElement(window.itemTrackerCompletionNotification);
-	}
-	window.itemTrackerCompletionNotification.text.setText("\\c[3]Todos os itens de " + list.name + " conseguidos!\\c[0]");
-	window.itemTrackerCompletionNotification._time = 3;
-	window.itemTrackerCompletionNotification.hook.visible = true;
-}
 
 function ensureItemTrackerHud() {
 	if (!ItemTrackerHud || window.itemTrackerHud) return window.itemTrackerHud;
@@ -329,12 +405,18 @@ function createItemTrackerHudClass() {
 		},
 		update: function() {
 			this.parent();
+			if (completionHudListId) {
+				completionHudTime -= ig.system.tick;
+				if (completionHudTime <= 0) {
+					showNextCompletedHudList();
+				}
+			}
 			this._refresh();
 		},
 		_refresh: function() {
 			const text = getHudText();
 			this.text.setText(text);
-			this.background.hook.size.y = text ? Math.min(130, Math.max(24, this.text.hook.size.y + 12)) : 0;
+			this.background.hook.size.y = text ? Math.max(24, this.text.hook.size.y + 12) : 0;
 			this.hook.size.y = this.background.hook.size.y;
 			this.hook.visible = Boolean(text);
 		}
@@ -363,9 +445,16 @@ function createTrackerDetails(list, onDelete, onTrack) {
 	details.addChildGui(details.deleteButton);
 	details.trackButton = new sc.ButtonGui("Track", null, true, sc.BUTTON_TYPE.SMALL);
 	details.trackButton.setAlign(ig.GUI_ALIGN.X_LEFT, ig.GUI_ALIGN.Y_BOTTOM);
-	details.trackButton.setPos(110, -2);
+	details.trackButton.setPos(13 + details.deleteButton.hook.size.x + 10, -2);
 	details.trackButton.onButtonPress = onTrack;
 	details.addChildGui(details.trackButton);
+	details.locationButton = new sc.ButtonGui("Location", null, true, sc.BUTTON_TYPE.SMALL);
+	details.locationButton.setAlign(ig.GUI_ALIGN.X_LEFT, ig.GUI_ALIGN.Y_BOTTOM);
+	details.locationButton.setPos(13 + details.deleteButton.hook.size.x + details.trackButton.hook.size.x + 20, -2);
+	details.locationButton.onButtonPress = function() {
+		showTraderLocation(list);
+	};
+	details.addChildGui(details.locationButton);
 	details.registerButton = function() {
 		sc.menu.buttonInteract.addGlobalButton(details.deleteButton, function() {
 			return sc.control.menuConfirm();
@@ -373,14 +462,21 @@ function createTrackerDetails(list, onDelete, onTrack) {
 		sc.menu.buttonInteract.addGlobalButton(details.trackButton, function() {
 			return sc.control.menuConfirm();
 		});
+		sc.menu.buttonInteract.addGlobalButton(details.locationButton, function() {
+			return sc.control.menuConfirm();
+		});
 	};
 	details.unregisterButton = function() {
 		sc.menu.buttonInteract.removeGlobalButton(details.deleteButton);
 		sc.menu.buttonInteract.removeGlobalButton(details.trackButton);
+		sc.menu.buttonInteract.removeGlobalButton(details.locationButton);
 	};
 	details.setList = function(nextList) {
 		details.clearInfoButtons();
 		details.title.setText(nextList.name);
+		details.locationButton.onButtonPress = function() {
+			showTraderLocation(nextList);
+		};
 		let rowY = 28;
 		nextList.items.forEach((trackedItem) => {
 			const item = sc.inventory.getItem(trackedItem.id);
@@ -495,7 +591,8 @@ export default class ItemTracker extends Plugin {
 				"game.feature.trade.gui.trade-menu",
 				"game.feature.menu.gui.quests.quest-menu",
 				"game.feature.menu.gui.enemies.enemy-pages",
-				"game.feature.menu.gui.botanics.botanics-misc"
+				"game.feature.menu.gui.botanics.botanics-misc",
+				"game.feature.npc.gui.npc-display-gui"
 			)
 			.defines(() => {
 				sc.BotanicsPlantView.inject({
@@ -532,23 +629,13 @@ export default class ItemTracker extends Plugin {
 					setItemTrackerList: function(list, onDelete) {
 						if (!this.itemTrackerDetails) {
 							this.itemTrackerDetails = createTrackerDetails(list, onDelete, function() {
-								setActiveList(list.id);
-								const state = readState();
-								state.visible = true;
-								writeState(state);
-								ensureItemTrackerHud();
-								window.itemTrackerHud._refresh();
+								trackList(list.id);
 							});
 							this.addChildGui(this.itemTrackerDetails);
 						} else {
 							this.itemTrackerDetails.deleteButton.onButtonPress = onDelete;
 							this.itemTrackerDetails.trackButton.onButtonPress = function() {
-								setActiveList(list.id);
-								const state = readState();
-								state.visible = true;
-								writeState(state);
-								ensureItemTrackerHud();
-								window.itemTrackerHud._refresh();
+								trackList(list.id);
 							};
 							this.itemTrackerDetails.setList(list);
 						}
@@ -619,6 +706,21 @@ export default class ItemTracker extends Plugin {
 			}
 				});
 
+				sc.TradeInfo.inject({
+					startTradeMenu: function() {
+						const mapName = sc.map.getCurrentMapName();
+						currentTraderLocation = {
+							traderId: this.key,
+							name: localizedText(sc.trade.getTraderName(this.key)),
+							area: localizedText(sc.trade.getTraderAreaName(this.key)),
+							map: localizedText(mapName),
+							mapPath: sc.map.currentMap || "",
+							characterName: this.entity && this.entity.characterName || null
+						};
+						return this.parent();
+					}
+				});
+
 				sc.QuestListBox.inject({
 					init: function() {
 						this.parent();
@@ -673,8 +775,9 @@ export default class ItemTracker extends Plugin {
 						this.itemTrackerGroup.clear();
 						const state = readState();
 						updateListStatus(state);
-						for (const list of getActiveLists(state)) {
-							const prefix = list.id === state.activeListId ? "\\i[quest-fav]" : "\\i[quest]";
+						const lists = getActiveLists(state).concat(state.lists.filter((list) => list.completed));
+						for (const list of lists) {
+							const prefix = list.completed ? "\\i[quest-solve]" : list.id === state.activeListId ? "\\i[quest-fav]" : "\\i[quest]";
 							const button = new sc.ItemBoxButton(prefix + list.name, 236, 25, 0);
 							button.setData({list: list});
 							this.itemTrackerList.addButton(button);

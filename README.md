@@ -12,17 +12,27 @@ Repositório: <https://github.com/JoaoGabrielRLP/Crosscode-item-tracker>
 	selecionada.
 - Permite manter várias listas salvas.
 - Impede listas duplicadas para o mesmo item produzido.
-- Mostra apenas listas não finalizadas na aba `Listas` do menu de missões.
-- Mantém listas concluídas no histórico interno.
+- Mostra listas ativas e concluídas na aba `Listas` do menu de missões, com um
+	ícone próprio para as concluídas.
+- Mantém listas concluídas no histórico e reutiliza a mesma lista ao rastrear
+	novamente uma receita concluída.
 - Permite excluir uma lista pelo botão `DELETE`.
 - Permite selecionar uma lista no menu de missões e torná-la a lista exibida no
 	HUD pelo botão `Track`.
+- Exibe um botão `Location` nos detalhes da lista para consultar o trader, a
+	região, a parte do mapa e, quando disponível, o sprite do NPC.
+- Para atualizar a localização de listas criadas antes desse recurso, pressione
+	`Track` novamente ao visitar o trader.
 - Exibe no HUD apenas uma lista por vez.
 - Permite alternar entre as listas ativas usando a tecla `L`.
 - Ao pressionar `L` repetidamente, o HUD passa para a próxima lista; depois da
 	última lista, ele desaparece.
 - Atualiza as quantidades dos materiais conforme o jogador coleta itens.
 - Move automaticamente listas completas para o histórico.
+- Marca cada material concluído em amarelo no HUD.
+- Ao concluir uma lista, mantém seus itens e o texto `completed` no HUD por
+	alguns segundos, toca o som de missão concluída e então exibe a próxima lista
+	pendente na fila.
 - Permite clicar diretamente na linha de um material que o jogador já possui
 	para consultar onde obtê-lo.
 - Exibe nomes localizados de criaturas, plantas e áreas usando os dados do jogo.
@@ -38,8 +48,10 @@ Repositório: <https://github.com/JoaoGabrielRLP/Crosscode-item-tracker>
 3. Pressione `Track` para criar ou atualizar a lista daquele item.
 4. Abra o menu de missões e selecione a aba `Listas`.
 5. Selecione uma lista para ver seus materiais no painel esquerdo.
-6. Use `Track` para exibir essa lista no HUD.
-7. Pressione `L` para alternar entre as listas ativas.
+6. Use `Track` para exibir essa lista no HUD. Ao rastrear novamente uma receita
+	concluída, a nova meta soma os materiais da receita ao estoque atual.
+7. Use `Location` para ver onde encontrar o trader que oferece o item.
+8. Pressione `L` para alternar entre as listas ativas.
 
 Quando o jogador já possui parte de um material, a linha correspondente pode
 ser selecionada para abrir uma janela com as fontes conhecidas, como criaturas,
@@ -52,11 +64,12 @@ O HUD aparece no canto superior direito e mostra:
 - O nome do item que está sendo acompanhado.
 - Cada material necessário.
 - A quantidade atual e a quantidade necessária.
-- Um indicador visual e texto amarelo quando o material já foi obtido.
-- Uma mensagem temporária quando todos os materiais da lista forem obtidos.
+- Materiais obtidos destacados em amarelo.
+- O texto `completed` abaixo dos materiais quando a lista for concluída.
 
-O HUD mostra somente a lista ativa. A tecla `L` controla a troca entre listas e
-a visibilidade do HUD.
+Após a conclusão, a lista permanece no HUD por alguns segundos e então dá lugar
+à próxima lista pendente. A tecla `L` controla a troca entre listas e a
+visibilidade do HUD.
 
 ## Armazenamento
 
